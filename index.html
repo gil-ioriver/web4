@@ -1,1 +1,182 @@
-<HTML><BODY>web4</BODY></HTML>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>URL Parameters Viewer</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { margin: 24px; color: #0f172a; background: #f8fafc; }
+    h1 { margin: 0 0 16px; font-size: 22px; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; box-shadow: 0 2px 10px rgba(2,6,23,0.03); margin-bottom: 16px; }
+    code, pre { background: #0b102000; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    th { background: #f1f5f9; font-weight: 600; }
+    .muted { color: #475569; }
+    .row { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { cursor: pointer; border: 1px solid #cbd5e1; background: #fff; padding: 8px 12px; border-radius: 10px; }
+    button:hover { background: #f8fafc; }
+    @media (min-width: 900px) {
+      .row { grid-template-columns: 1.2fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>URL Parameters Viewer</h1>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="muted">Full URL</div>
+        <pre id="full-url" style="white-space: break-spaces;"></pre>
+      </div>
+      <div>
+        <div class="muted">Raw parts</div>
+        <div style="display:grid;gap:6px;">
+          <div><strong>Query</strong> (<code>?...</code>)<br /><code id="raw-query"></code></div>
+          <div><strong>Hash</strong> (<code>#...</code>)<br /><code id="raw-hash"></code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="actions" style="justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <strong>Parameters (query + hash)</strong>
+      <div class="actions">
+        <button id="copy-json">Copy JSON</button>
+        <button id="clear">Reload without params</button>
+        <button id="example">Open example</button>
+      </div>
+    </div>
+    <div id="empty" class="muted">No parameters received.</div>
+    <table id="params-table" style="display:none;">
+      <thead>
+        <tr><th style="width: 220px;">Key</th><th>Value</th><th>Source</th></tr>
+      </thead>
+      <tbody id="params-body"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="muted">JSON object (keys with multiple values become arrays)</div>
+    <pre id="json" aria-live="polite">{}</pre>
+  </div>
+
+  <script>
+    // Treat '+' as space to gracefully handle application/x-www-form-urlencoded style inputs.
+    function normalizeRaw(raw) {
+      return raw.replace(/^\?/, '').replace(/^#/, '').replace(/\+/g, '%20');
+    }
+
+    // Parse a raw query-ish string into a list of { key, value }
+    function parsePairs(raw) {
+      const normalized = normalizeRaw(raw);
+      if (!normalized) return [];
+      const out = [];
+      const usp = new URLSearchParams(normalized);
+      for (const [k, v] of usp.entries()) out.push({ key: k, value: v });
+      return out;
+    }
+
+    // Merge pairs into an object; repeated keys become arrays (in order)
+    function pairsToObject(pairs) {
+      const obj = Object.create(null);
+      for (const { key, value } of pairs) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          if (Array.isArray(obj[key])) obj[key].push(value);
+          else obj[key] = [obj[key], value];
+        } else {
+          obj[key] = value;
+        }
+      }
+      return obj;
+    }
+
+    function render() {
+      const fullUrlEl = document.getElementById('full-url');
+      const rawQueryEl = document.getElementById('raw-query');
+      const rawHashEl = document.getElementById('raw-hash');
+      const table = document.getElementById('params-table');
+      const tbody = document.getElementById('params-body');
+      const empty = document.getElementById('empty');
+      const jsonEl = document.getElementById('json');
+
+      const queryRaw = window.location.search || "";
+      const hashRaw  = window.location.hash || "";
+
+      fullUrlEl.textContent = window.location.href;
+      rawQueryEl.textContent = queryRaw || "(none)";
+      rawHashEl.textContent  = hashRaw  || "(none)";
+
+      // Parse query params and hash params.
+      const queryPairs = parsePairs(queryRaw).map(p => ({...p, source: "query"}));
+      // If the hash includes "?" (e.g. #?a=1&b=2) parse from after "?", else parse whole hash as params.
+      let hashPart = hashRaw.startsWith("#?") ? hashRaw.slice(2) : hashRaw.slice(1);
+      const hashPairs = parsePairs(hashPart).map(p => ({...p, source: "hash"}));
+
+      const allPairs = [...queryPairs, ...hashPairs];
+
+      // Table rendering
+      tbody.innerHTML = "";
+      if (allPairs.length === 0) {
+        table.style.display = "none";
+        empty.style.display = "block";
+      } else {
+        for (const { key, value, source } of allPairs) {
+          const tr = document.createElement('tr');
+          const tdK = document.createElement('td');
+          const tdV = document.createElement('td');
+          const tdS = document.createElement('td');
+          tdK.textContent = key;
+          tdV.textContent = value;
+          tdS.textContent = source;
+          tr.append(tdK, tdV, tdS);
+          tbody.appendChild(tr);
+        }
+        empty.style.display = "none";
+        table.style.display = "";
+      }
+
+      // JSON object (built from both sources)
+      const jsonObj = pairsToObject(allPairs.map(({key, value}) => ({key, value})));
+      jsonEl.textContent = JSON.stringify(jsonObj, null, 2);
+    }
+
+    // Buttons
+    document.getElementById('copy-json').addEventListener('click', async () => {
+      const json = document.getElementById('json').textContent;
+      try {
+        await navigator.clipboard.writeText(json);
+        alert('JSON copied to clipboard.');
+      } catch {
+        // Fallback: select text
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById('json'));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        alert('Select + copy the highlighted JSON.');
+      }
+    });
+
+    document.getElementById('clear').addEventListener('click', () => {
+      const url = window.location.origin + window.location.pathname;
+      window.location.href = url; // reload without params
+    });
+
+    document.getElementById('example').addEventListener('click', () => {
+      const url = new URL(window.location.href);
+      url.search = '?name=Ada&lang=JavaScript&name=Lovelace';
+      url.hash = '#mode=demo&feature=true';
+      window.location.href = url.toString();
+    });
+
+    // Render now, and update if the hash changes dynamically.
+    window.addEventListener('hashchange', render);
+    render();
+  </script>
+</body>
+</html>
